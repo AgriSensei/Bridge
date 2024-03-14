@@ -35,7 +35,7 @@ type Sensor struct {
 func main() {
 
 	arg := os.Args[1]
-	serverPort := 5000
+	serverPort := 5500
 	userId := 1
 	requestUrl := fmt.Sprintf("http://localhost:%d/new/user/%d/measurements", serverPort, userId)
 
@@ -58,42 +58,57 @@ func main() {
 
 	if !portFound {
 		log.Fatal("Requested port is not available")
-		return
 	}
 
-	mode := &serial.Mode{BaudRate: 9600}
+	mode := &serial.Mode{
+		BaudRate: 9600,
+		DataBits: 8,
+		Parity:   serial.NoParity,
+		StopBits: serial.OneStopBit,
+	}
 	port, err := serial.Open(arg, mode)
 	if err != nil {
 		log.Fatal(err)
-		return
 	}
 
 	buff := make([]byte, 256)
 	for {
+		for i := 0; i < len(buff); i++ {
+			buff[i] = 0
+		}
+
 		n, err := port.Read(buff)
 		if err != nil {
-			log.Fatal(err)
+			log.Print(err)
 			break
 		}
 		if n == 0 {
 			continue
 		}
+		if n < 8 {
+			log.Printf("buff read is not large enough for header")
+			continue
+		}
+
+		//for _, byt := range buff {
+		//	log.Printf("%d|", byt)
+		//}
 
 		packet, err := makePacket(buff)
 		if err != nil {
-			log.Fatal(err)
+			log.Print(err)
 			continue
 		}
 
 		body, err := makeBody(packet)
 		if err != nil {
-			log.Fatal(err)
+			log.Print(err)
 			continue
 		}
 
 		_, err = sendRequest(requestUrl, body)
 		if err != nil {
-			log.Fatal(err)
+			log.Print(err)
 			continue
 		}
 	}
@@ -104,12 +119,21 @@ func makePacket(buff []byte) (Packet, error) {
 		return Packet{}, errors.New("read packet is not big enough for header")
 	}
 
-	fromId := binary.LittleEndian.Uint16([]byte{buff[0], buff[1]}) - 2
-	toId := binary.LittleEndian.Uint16([]byte{buff[2], buff[4]})
-	messageId := buff[5]
-	messageType := buff[6]
-	dataSize := binary.LittleEndian.Uint16([]byte{buff[7], buff[8]})
-	data := buff[9:dataSize]
+	fromId := binary.LittleEndian.Uint16(buff[0:2]) - 2
+	log.Printf("From ID: %d", fromId)
+	toId := binary.LittleEndian.Uint16(buff[2:4])
+	log.Printf("To ID: %d", toId)
+	messageId := buff[4]
+	log.Printf("Message ID: %d", messageId)
+	messageType := buff[5]
+	log.Printf("Message Type: %d", messageType)
+	dataSize := binary.LittleEndian.Uint16(buff[6:8])
+	log.Printf("Data Size: %d", dataSize)
+	if 8+int(dataSize) > len(buff) {
+		return Packet{}, errors.New("Data integrity issue, dataSize larger than buffer")
+	}
+	data := buff[8 : 8+dataSize]
+	log.Printf("Data: %s", string(data[:]))
 
 	return Packet{
 		fromId:      fromId,
